@@ -17,7 +17,8 @@ type Reader struct {
 	originalBuffer []float32
 	toSkip         int
 
-	length int64
+	length     int64
+	byteLength int64
 }
 
 // NewReader creates a new Reader.
@@ -39,6 +40,11 @@ func (r *Reader) init() error {
 		if err == nil {
 			r.length = length
 		}
+		byteLength, err := r.r.seeker.Seek(0, io.SeekEnd)
+		if err != nil {
+			return err
+		}
+		r.byteLength = byteLength
 		r.r.buffer = nil
 		r.r.seeker.Seek(0, io.SeekStart)
 	}
@@ -98,20 +104,31 @@ func (r *Reader) Length() int64 { return r.length }
 // SetPosition seeks to a position in samples.
 // It will return an error if the underlying reader is not seekable.
 func (r *Reader) SetPosition(pos int64) error {
+	return r.SetPositionAfter(pos, 0)
+}
+
+// SetPosition seeks to a position in samples.
+// It will return an error if the underlying reader is not seekable.
+// The byteOffset is the start offset to seek from. The byteOffset must be at or
+// before the start of the ogg page that contains pos.
+func (r *Reader) SetPositionAfter(pos, byteOffset int64) error {
 	if r.r.seeker == nil {
 		return errors.New("oggvorbis: reader is not seekable")
 	}
 	r.buffer = nil
-	if pos >= r.length {
+	if pos >= r.length || byteOffset >= r.byteLength {
 		r.r.lastPacket = true
 		r.position = r.length
 		return nil
 	}
-	start, err := r.r.SeekPageBefore(pos)
+	start, err := r.r.SeekPageBefore(pos, byteOffset)
 	if err != nil {
 		return err
 	}
 	packet, err := r.r.NextPacket()
+	if err != nil {
+		return err
+	}
 	r.dec.Clear()
 	r.dec.DecodeInto(packet, r.originalBuffer)
 	r.position = start

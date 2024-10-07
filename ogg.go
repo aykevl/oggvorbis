@@ -100,13 +100,36 @@ func (r *oggReader) LastPosition() (int64, error) {
 	}
 }
 
-func (r *oggReader) SeekPageBefore(pos int64) (int64, error) {
-	r.seeker.Seek(0, io.SeekStart)
+func (r *oggReader) SeekPageBefore(pos, byteOffset int64) (int64, error) {
+	if byteOffset == 0 {
+		// Start the seek at the beginning.
+		r.seeker.Seek(0, io.SeekStart)
+	} else {
+		// Seek to the indicated byte position.
+		_, err := r.seeker.Seek(byteOffset, io.SeekStart)
+		if err != nil {
+			return 0, err
+		}
+
+		// Find the next Ogg page.
+		err = r.Restore()
+		if err != nil {
+			return 0, err
+		}
+
+		// Seek to the start of this page.
+		_, err = r.seeker.Seek(-int64(len(r.buffer)), io.SeekCurrent)
+		if err != nil {
+			return 0, err
+		}
+	}
+
 	r.buffer = nil
 	r.lastPacket = false
 	var p page
 	var lastOffset int64
 	var lastPos int64
+	firstPage := true
 	for {
 		offset, _ := r.seeker.Seek(0, io.SeekCurrent)
 		err := p.readHeader(r)
@@ -114,6 +137,9 @@ func (r *oggReader) SeekPageBefore(pos int64) (int64, error) {
 			return 0, err
 		}
 		if p.AbsoluteGranulePosition > pos {
+			if byteOffset != 0 && firstPage {
+				return 0, errors.New("seek position was before byteOffset")
+			}
 			r.seeker.Seek(lastOffset, io.SeekStart)
 			err := r.currentPage.read(r)
 			if err != nil {
@@ -134,6 +160,7 @@ func (r *oggReader) SeekPageBefore(pos int64) (int64, error) {
 		lastPos = p.AbsoluteGranulePosition
 		r.seeker.Seek(int64(p.totalSize-len(r.buffer)), io.SeekCurrent)
 		r.buffer = nil
+		firstPage = false
 	}
 }
 
